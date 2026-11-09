@@ -222,6 +222,7 @@
       display: flex;
       flex-direction: column;
       gap: 8px;
+      align-items: flex-end;
     }
 
     .secondary-action-btn {
@@ -240,6 +241,15 @@
     .secondary-action-btn:hover {
       background: var(--accent-color);
       color: white;
+    }
+
+    .locked-notice {
+      font-size: 12px;
+      color: var(--secondary-text);
+      background: var(--item-bg);
+      padding: 6px 12px;
+      border-radius: 980px;
+      white-space: nowrap;
     }
 
     .scroll-top-btn {
@@ -448,14 +458,14 @@
     let supabaseClient = null;
     let scheduleData = [];
     
-    const roleOrder = ["領唱", "隊員", "司琴", "司他", "鼓手"];
+    // 職分次序：主席、聖餐襄禮、領唱、隊員、司琴、司他、鼓手
+    const roleOrder = ["主席", "聖餐襄禮", "領唱", "隊員", "司琴", "司他", "鼓手"];
     const allowedRoles = [...roleOrder];
     let currentActiveId = null;
 
     const vocalRoles = ["領唱", "隊員"];
     const instrumentRoles = ["司琴", "司他", "鼓手"];
 
-    // 監聽滾動事件
     window.addEventListener('scroll', () => {
       const btn = document.getElementById('scrollTopBtn');
       if (btn) {
@@ -471,7 +481,6 @@
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
-    // 確保 DOM 載入後才初始化 Supabase 並抓取資料
     window.addEventListener('DOMContentLoaded', () => {
       if (typeof supabase !== 'undefined') {
         try {
@@ -485,7 +494,6 @@
 
     async function fetchSchedules() {
       if (!supabaseClient) {
-        // 給予一點緩衝等待 CDN 載入
         setTimeout(fetchSchedules, 500);
         return;
       }
@@ -537,6 +545,15 @@
       return text.replace(regex, '<span style="color: var(--accent-color); font-weight: 600; background: rgba(0, 113, 227, 0.12); padding: 0 3px; border-radius: 4px;">$1</span>');
     }
 
+    // 計算該主日（YYYY-MM-DD）的上週星期四 23:59:59 截止時間
+    function getLockDeadline(sundayDateStr) {
+      const sunDate = new Date(sundayDateStr + 'T00:00:00');
+      const thuDate = new Date(sunDate);
+      thuDate.setDate(sunDate.getDate() - 3);
+      thuDate.setHours(23, 59, 59, 999);
+      return thuDate;
+    }
+
     function renderSchedule(filter = "") {
       const container = document.getElementById("scheduleContainer");
       container.innerHTML = "";
@@ -551,6 +568,7 @@
           .filter(([k]) => allowedRoles.includes(k))
           .map(([k, v]) => Array.isArray(v) ? k + ':' + v.join(" ") : k + ':' + v)
           .join(" ");
+        
         const text = item.date + ' ' + rolesString;
         const matches = text.toLowerCase().includes(trimmedFilter.toLowerCase());
 
@@ -584,6 +602,19 @@
 
         const isUpdated = item.roles && item.roles._is_updated;
 
+        // 檢查是否超過星期四 23:59:59 鎖定時間
+        const lockDeadline = getLockDeadline(item.date);
+        const isLocked = now > lockDeadline;
+
+        let actionHtml = '';
+        if (isLocked) {
+          actionHtml = '<div class="locked-notice">🔒 已過修改時限（週四 23:59）</div>';
+        } else {
+          actionHtml = 
+            '<button class="secondary-action-btn" onclick="openReplaceModal(' + item.id + ', \'' + item.date + '\')">直接替換</button>' +
+            '<button class="secondary-action-btn" onclick="openSwapModal(' + item.id + ', \'' + item.date + '\')">事奉對調</button>';
+        }
+
         card.innerHTML = 
           '<div class="role-section">' +
             '<div class="card-header-row">' +
@@ -593,8 +624,7 @@
             (htmlContent || '<span style="color:var(--secondary-text);font-size:13px;">無排班資料</span>') +
           '</div>' +
           '<div class="card-actions">' +
-            '<button class="secondary-action-btn" onclick="openReplaceModal(' + item.id + ', \'' + item.date + '\')">直接替換</button>' +
-            '<button class="secondary-action-btn" onclick="openSwapModal(' + item.id + ', \'' + item.date + '\')">事奉對調</button>' +
+            actionHtml +
           '</div>';
         container.appendChild(card);
       });
@@ -606,6 +636,26 @@
 
     function closeModal() {
       document.getElementById("generalModal").classList.remove("active");
+    }
+
+    function getCandidatesForRole(role) {
+      const nameSet = new Set();
+      scheduleData.forEach(item => {
+        const val = item.roles && item.roles[role];
+        if (val) {
+          if (Array.isArray(val)) val.forEach(v => nameSet.add(v));
+          else if (typeof val === 'string') nameSet.add(val);
+        }
+      });
+      if (nameSet.size === 0) {
+        scheduleData.forEach(item => {
+          Object.values(item.roles || {}).forEach(val => {
+            if (Array.isArray(val)) val.forEach(v => nameSet.add(v));
+            else if (typeof val === 'string') nameSet.add(val);
+          });
+        });
+      }
+      return Array.from(nameSet).sort();
     }
 
     // 直接替換
@@ -635,18 +685,23 @@
     }
 
     function selectReplaceTarget(role, oldPerson, date) {
-      const isVocal = vocalRoles.includes(role);
-      const targetRoles = isVocal ? vocalRoles : instrumentRoles;
-      const nameSet = new Set();
-      scheduleData.forEach(item => {
-        Object.entries(item.roles || {}).forEach(([r, val]) => {
-          if (targetRoles.includes(r)) {
-            if (Array.isArray(val)) val.forEach(v => nameSet.add(v));
-            else if (typeof val === 'string') nameSet.add(val);
-          }
+      let candidates = [];
+      if (role === "主席" || role === "聖餐襄禮") {
+        candidates = getCandidatesForRole(role);
+      } else {
+        const isVocal = vocalRoles.includes(role);
+        const targetRoles = isVocal ? vocalRoles : instrumentRoles;
+        const nameSet = new Set();
+        scheduleData.forEach(item => {
+          Object.entries(item.roles || {}).forEach(([r, val]) => {
+            if (targetRoles.includes(r)) {
+              if (Array.isArray(val)) val.forEach(v => nameSet.add(v));
+              else if (typeof val === 'string') nameSet.add(val);
+            }
+          });
         });
-      });
-      const candidates = Array.from(nameSet).sort();
+        candidates = Array.from(nameSet).sort();
+      }
 
       const body = document.getElementById("modalBody");
       let optionsHtml = candidates.map(n => '<option value="' + n + '" ' + (n === oldPerson ? 'selected' : '') + '>' + n + '</option>').join('');
@@ -741,19 +796,27 @@
       const personSelect = document.getElementById("targetSwapPerson");
       if (!targetItem || !personSelect) return;
 
-      const isVocal = vocalRoles.includes(role);
-      const targetRoles = isVocal ? vocalRoles : instrumentRoles;
-
       const servingNames = [];
-      Object.entries(targetItem.roles || {}).forEach(([r, val]) => {
-        if (targetRoles.includes(r)) {
-          if (Array.isArray(val)) {
-            val.forEach(p => servingNames.push(p));
-          } else if (typeof val === 'string') {
-            servingNames.push(val);
-          }
+      if (role === "主席" || role === "聖餐襄禮") {
+        const val = targetItem.roles && targetItem.roles[role];
+        if (val) {
+          if (Array.isArray(val)) val.forEach(p => servingNames.push(p));
+          else if (typeof val === 'string') servingNames.push(val);
         }
-      });
+      } else {
+        const isVocal = vocalRoles.includes(role);
+        const targetRoles = isVocal ? vocalRoles : instrumentRoles;
+
+        Object.entries(targetItem.roles || {}).forEach(([r, val]) => {
+          if (targetRoles.includes(r)) {
+            if (Array.isArray(val)) {
+              val.forEach(p => servingNames.push(p));
+            } else if (typeof val === 'string') {
+              servingNames.push(val);
+            }
+          }
+        });
+      }
 
       const uniqueNames = Array.from(new Set(servingNames)).sort();
       personSelect.innerHTML = uniqueNames.map(n => '<option value="' + n + '">' + n + '</option>').join('');
@@ -780,17 +843,30 @@
       sourceItem.updated_at = now;
 
       if (sourceItem.id !== targetItem.id) {
-        Object.entries(targetItem.roles || {}).forEach(([r, val]) => {
-          if (allowedRoles.includes(r)) {
-            if (Array.isArray(val)) {
-              if (val.includes(targetSwapPerson)) {
-                targetItem.roles[r] = val.map(p => p === targetSwapPerson ? oldPerson : p);
-              }
-            } else if (val === targetSwapPerson) {
-              targetItem.roles[r] = oldPerson;
+        if (role === "主席" || role === "聖餐襄禮") {
+          let tVal = targetItem.roles[role];
+          if (Array.isArray(tVal)) {
+            if (tVal.includes(targetSwapPerson)) {
+              targetItem.roles[role] = tVal.map(p => p === targetSwapPerson ? oldPerson : p);
+            } else {
+              targetItem.roles[role] = [...tVal, oldPerson];
             }
+          } else {
+            targetItem.roles[role] = oldPerson;
           }
-        });
+        } else {
+          Object.entries(targetItem.roles || {}).forEach(([r, val]) => {
+            if (allowedRoles.includes(r)) {
+              if (Array.isArray(val)) {
+                if (val.includes(targetSwapPerson)) {
+                  targetItem.roles[r] = val.map(p => p === targetSwapPerson ? oldPerson : p);
+                }
+              } else if (val === targetSwapPerson) {
+                targetItem.roles[r] = oldPerson;
+              }
+            }
+          });
+        }
         targetItem.roles._is_updated = true;
         targetItem.updated_at = now;
         await supabaseClient.from('schedules').update({ roles: targetItem.roles, updated_at: now }).eq('id', targetItem.id);
