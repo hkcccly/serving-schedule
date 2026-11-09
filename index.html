@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>教會主日事奉人員編排器</title>
   <!-- 引入 Supabase JS SDK -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
     :root {
       --bg-color: #f5f5f7;
@@ -271,4 +271,585 @@
 
     .error-box {
       color: #ff3b30;
-      background: rgba(255, 59, 48
+      background: rgba(255, 59, 48, 0.08);
+      border-radius: 12px;
+      padding: 20px;
+      line-height: 1.6;
+      text-align: left;
+    }
+
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.35);
+      backdrop-filter: blur(4px);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      z-index: 1000;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.25s ease;
+    }
+
+    .modal-overlay.active {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .modal-card {
+      background: var(--card-bg);
+      color: var(--text-color);
+      width: 90%;
+      max-width: 420px;
+      border-radius: 20px;
+      padding: 24px;
+      box-shadow: 0 16px 32px rgba(0,0,0,0.12);
+      transform: scale(0.95);
+      transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      box-sizing: border-box;
+      border: 1px solid var(--border-color);
+      max-height: 85vh;
+      overflow-y: auto;
+    }
+
+    .modal-overlay.active .modal-card {
+      transform: scale(1);
+    }
+
+    .modal-title {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+
+    .modal-subtitle {
+      font-size: 13px;
+      color: var(--secondary-text);
+      margin-bottom: 16px;
+    }
+
+    .form-group {
+      margin-bottom: 16px;
+    }
+
+    .form-label {
+      font-size: 12px;
+      color: var(--secondary-text);
+      display: block;
+      margin-bottom: 6px;
+    }
+
+    .form-select {
+      width: 100%;
+      padding: 10px 14px;
+      font-size: 14px;
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      background: var(--item-bg);
+      color: var(--text-color);
+      outline: none;
+      box-sizing: border-box;
+    }
+
+    .role-select-btn {
+      display: block;
+      width: 100%;
+      padding: 10px 14px;
+      margin-bottom: 8px;
+      background: var(--item-bg);
+      color: var(--text-color);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      font-size: 14px;
+      text-align: left;
+      cursor: pointer;
+      transition: border-color 0.2s;
+    }
+
+    .role-select-btn:hover {
+      border-color: var(--accent-color);
+    }
+
+    .modal-footer {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 20px;
+    }
+
+    .cancel-btn {
+      background: var(--item-bg);
+      color: var(--text-color);
+      border: none;
+      padding: 8px 16px;
+      border-radius: 980px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <header>
+      <h1>主日崇拜事奉人員表</h1>
+      <div class="header-controls">
+        <div class="update-notice" id="lastUpdate"><span class="red-dot"></span>載入中...</div>
+      </div>
+    </header>
+
+    <div class="search-box">
+      <span class="search-icon">🔍</span>
+      <input type="text" class="search-input" id="searchInput" placeholder="搜尋日期、角色或人員姓名...">
+    </div>
+
+    <div id="scheduleContainer">
+      <div class="loading">正在載入...</div>
+    </div>
+  </div>
+
+  <!-- 回到頂部按鈕 -->
+  <button id="scrollTopBtn" class="scroll-top-btn" onclick="scrollToTop()" title="回到最上">↑</button>
+
+  <div class="modal-overlay" id="generalModal">
+    <div class="modal-card">
+      <div class="modal-title" id="modalTitle">標題</div>
+      <div class="modal-subtitle" id="modalSubtitle">說明</div>
+      <div id="modalBody"></div>
+      <div class="modal-footer">
+        <button class="cancel-btn" onclick="closeModal()">關閉</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const SUPABASE_URL = 'https://mhxxbkaplbwzbdtewcxe.supabase.co';
+    const SUPABASE_ANON_KEY = 'sb_publishable_q9qFHq4I7aBj6XqT_bPEFA_BjLGoBbc';
+    
+    let supabaseClient = null;
+    let scheduleData = [];
+    
+    const roleOrder = ["主席", "聖餐襄禮", "領唱", "隊員", "司琴", "司他", "鼓手"];
+    const allowedRoles = [...roleOrder];
+    let currentActiveId = null;
+
+    const vocalRoles = ["領唱", "隊員"];
+    const instrumentRoles = ["司琴", "司他", "鼓手"];
+
+    window.addEventListener('scroll', () => {
+      const btn = document.getElementById('scrollTopBtn');
+      if (btn) {
+        if (window.scrollY > 300) {
+          btn.classList.add('visible');
+        } else {
+          btn.classList.remove('visible');
+        }
+      }
+    });
+
+    function scrollToTop() {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      try {
+        if (typeof supabase !== 'undefined' && supabase.createClient) {
+          supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        }
+      } catch (e) {
+        console.error("Supabase 初始化錯誤:", e);
+      }
+      fetchSchedules();
+    });
+
+    async function fetchSchedules() {
+      if (!supabaseClient) {
+        document.getElementById("scheduleContainer").innerHTML = 
+          '<div class="error-box">' +
+          '<b>⚠️ Supabase SDK 載入失敗</b><br>' +
+          '可能原因：網路連線異常或 CDN 被阻擋。<br>' +
+          '請檢查網路或重新整理網頁。' +
+          '</div>';
+        document.getElementById("lastUpdateinnerHTML = '<span class="red-dot"></span>載入失敗';
+        return;
+      }
+
+      try {
+        const { data, error } = await supabaseClient
+          .from('schedules')
+          .select('*')
+          .order('date', { ascending: true });
+
+        if (error) throw error;
+
+        scheduleData = data || [];
+        renderSchedule(document.getElementById("searchInput").value);
+        updateGlobalLastModified();
+      } catch (err) {
+        document.getElementById("scheduleContainer").innerHTML = 
+          '<div class="error-box">' +
+          '<b>⚠️ 資料庫讀取失敗</b><br>' +
+          '錯誤訊息：' + (err.message || err) + '<br><br>' +
+          '<b>排查建議：</b><br>' +
+          '1. 確認 Supabase 資料表名稱是否為 <code>schedules</code>。<br>' +
+          '2. 確認已在 Supabase 執行公開讀寫 (RLS) 政策。' +
+          '</div>';
+        document.getElementById("lastUpdate").innerHTML = '<span class="red-dot"></span>連線失敗';
+      }
+    }
+
+    function updateGlobalLastModified() {
+      if (!scheduleData || scheduleData.length === 0) return;
+      let latest = scheduleData.reduce((max, item) => item.updated_at > max ? item.updated_at : max, scheduleData[0].updated_at);
+      const timeStr = new Date(latest).toLocaleString('zh-Hant', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+      document.getElementById("lastUpdate").innerHTML = '<span class="red-dot"></span>已更新：' + timeStr;
+    }
+
+    function highlightText(text, query) {
+      if (!query) return text;
+      const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp('(' + escaped + ')', 'gi');
+      return text.replace(regex, '<span style="color: var(--accent-color); font-weight: 600; background: rgba(0, 113, 227, 0.12); padding: 0 3px; border-radius: 4px;">$1</span>');
+    }
+
+    function getLockDeadline(sundayDateStr) {
+      const sunDate = new Date(sundayDateStr + 'T00:00:00');
+      const thuDate = new Date(sunDate);
+      thuDate.setDate(sunDate.getDate() - 3);
+      thuDate.setHours(23, 59, 59, 999);
+      return thuDate;
+    }
+
+    function renderSchedule(filter = "") {
+      const container = document.getElementById("scheduleContainer");
+      container.innerHTML = "";
+
+      const now = new Date();
+      const todayStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+      
+      const trimmedFilter = filter.trim();
+
+      const filtered = scheduleData.filter(item => {
+        const rolesString = Object.entries(item.roles || {})
+          .filter(([k]) => allowedRoles.includes(k))
+          .map(([k, v]) => Array.isArray(v) ? k + ':' + v.join(" ") : k + ':' + v)
+          .join(" ");
+        
+        const text = item.date + ' ' + rolesString;
+        const matches = text.toLowerCase().includes(trimmedFilter.toLowerCase());
+
+        if (!trimmedFilter && item.date < todayStr) {
+          return false;
+        }
+
+        return matches;
+      });
+
+      if (filtered.length === 0) {
+        container.innerHTML = '<div class="loading">目前沒有符合的事奉資料</div>';
+        return;
+      }
+
+      filtered.forEach(item => {
+        const card = document.createElement("div");
+        card.className = "schedule-card";
+        
+        const sortedRoles = Object.entries(item.roles || {})
+          .filter(([k]) => allowedRoles.includes(k))
+          .sort(([a], [b]) => roleOrder.indexOf(a) - roleOrder.indexOf(b));
+
+        let htmlContent = "";
+        sortedRoles.forEach(([role, person]) => {
+          let personsArr = Array.isArray(person) ? person : [person];
+          let personsHtml = personsArr.map(p => '<span class="role-item">' + highlightText(p, trimmedFilter) + '</span>').join('');
+          
+          htmlContent += '<div class="role-row"><span style="font-weight:600; min-width:85px; display:inline-block;">' + role + '：</span>' + personsHtml + '</div>';
+        });
+
+        const isUpdated = item.roles && item.roles._is_updated;
+        const lockDeadline = getLockDeadline(item.date);
+        const isLocked = now > lockDeadline;
+
+        let actionHtml = '';
+        if (isLocked) {
+          actionHtml = '<div class="locked-notice">🔒 已過修改時限（週四 23:59）</div>';
+        } else {
+          actionHtml = 
+            '<button class="secondary-action-btn" onclick="openReplaceModal(' + item.id + ', \'' + item.date + '\')">直接替換</button>' +
+            '<button class="secondary-action-btn" onclick="openSwapModal(' + item.id + ', \'' + item.date + '\')">事奉對調</button>';
+        }
+
+        card.innerHTML = 
+          '<div class="role-section">' +
+            '<div class="card-header-row">' +
+              '<div class="date-badge">📅 ' + highlightText(item.date, trimmedFilter) + '</div>' +
+              (isUpdated ? '<div class="updated-badge-green"><span class="green-dot"></span>已更新</div>' : '') +
+            '</div>' +
+            (htmlContent || '<span style="color:var(--secondary-text);font-size:13px;">無排班資料</span>') +
+          '</div>' +
+          '<div class="card-actions">' +
+            actionHtml +
+          '</div>';
+        container.appendChild(card);
+      });
+    }
+
+    document.getElementById("searchInput").addEventListener("input", (e) => {
+      renderSchedule(e.target.value);
+    });
+
+    function closeModal() {
+      document.getElementById("generalModal").classList.remove("active");
+    }
+
+    function getCandidatesForRole(role) {
+      const nameSet = new Set();
+      scheduleData.forEach(item => {
+        const val = item.roles && item.roles[role];
+        if (val) {
+          if (Array.isArray(val)) val.forEach(v => nameSet.add(v));
+          else if (typeof val === 'string') nameSet.add(val);
+        }
+      });
+      if (nameSet.size === 0) {
+        scheduleData.forEach(item => {
+          Object.values(item.roles || {}).forEach(val => {
+            if (Array.isArray(val)) val.forEach(v => nameSet.add(v));
+            else if (typeof val === 'string') nameSet.add(val);
+          });
+        });
+      }
+      return Array.from(nameSet).sort();
+    }
+
+    function openReplaceModal(id, date) {
+      currentActiveId = id;
+      const item = scheduleData.find(s => s.id === id);
+      document.getElementById("modalTitle").textContent = date + ' 直接替換';
+      document.getElementById("modalSubtitle").textContent = "請選擇您想替換的人員：";
+      const body = document.getElementById("modalBody");
+      body.innerHTML = "";
+
+      const sortedRoles = Object.entries(item.roles || {})
+        .filter(([k]) => allowedRoles.includes(k))
+        .sort(([a], [b]) => roleOrder.indexOf(a) - roleOrder.indexOf(b));
+
+      sortedRoles.forEach(([role, val]) => {
+        const persons = Array.isArray(val) ? val : [val];
+        persons.forEach(person => {
+          const btn = document.createElement("button");
+          btn.className = "role-select-btn";
+          btn.innerHTML = '<b>' + role + '</b>：' + person + ' <span style="float:right; color:var(--accent-color);">替換 ➔</span>';
+          btn.onclick = () => selectReplaceTarget(role, person, date);
+          body.appendChild(btn);
+        });
+      });
+      document.getElementById("generalModal").classList.add("active");
+    }
+
+    function selectReplaceTarget(role, oldPerson, date) {
+      let candidates = [];
+      if (role === "主席" || role === "聖餐襄禮") {
+        candidates = getCandidatesForRole(role);
+      } else {
+        const isVocal = vocalRoles.includes(role);
+        const targetRoles = isVocal ? vocalRoles : instrumentRoles;
+        const nameSet = new Set();
+        scheduleData.forEach(item => {
+          Object.entries(item.roles || {}).forEach(([r, val]) => {
+            if (targetRoles.includes(r)) {
+              if (Array.isArray(val)) val.forEach(v => nameSet.add(v));
+              else if (typeof val === 'string') nameSet.add(val);
+            }
+          });
+        });
+        candidates = Array.from(nameSet).sort();
+      }
+
+      const body = document.getElementById("modalBody");
+      let optionsHtml = candidates.map(n => '<option value="' + n + '" ' + (n === oldPerson ? 'selected' : '') + '>' + n + '</option>').join('');
+
+      body.innerHTML = 
+        '<div style="margin-bottom: 12px; font-size: 14px;">替換 <b>' + date + '</b> 的 <b>' + role + '</b>（原：<b>' + oldPerson + '</b>）</div>' +
+        '<div class="form-group">' +
+          '<label class="form-label">新人員：</label>' +
+          '<select id="targetNewPerson" class="form-select">' + optionsHtml + '</select>' +
+        '</div>' +
+        '<div class="modal-footer">' +
+          '<button class="cancel-btn" onclick="openReplaceModal(' + currentActiveId + ', \'' + date + '\')">返回</button>' +
+          '<button class="secondary-action-btn" onclick="executeReplace(\'' + role + '\', \'' + oldPerson + '\', \'' + date + '\')">確認替換</button>' +
+        '</div>';
+    }
+
+    async function executeReplace(role, oldPerson, sourceDate) {
+      const newPerson = document.getElementById("targetNewPerson").value;
+      const item = scheduleData.find(s => s.id === currentActiveId);
+      if (!item) return;
+
+      const now = new Date().toISOString();
+      let val = item.roles[role];
+      item.roles[role] = Array.isArray(val) ? val.map(p => p === oldPerson ? newPerson : p) : newPerson;
+      item.roles._is_updated = true;
+      item.updated_at = now;
+
+      const { error } = await supabaseClient.from('schedules').update({ roles: item.roles, updated_at: now }).eq('id', currentActiveId);
+      if (error) { alert('失敗：' + error.message); return; }
+
+      closeModal();
+      alert('已將 ' + sourceDate + ' 的 ' + role + '【' + oldPerson + '】替換為【' + newPerson + '】！');
+      fetchSchedules();
+    }
+
+    function openSwapModal(id, date) {
+      currentActiveId = id;
+      const item = scheduleData.find(s => s.id === id);
+      document.getElementById("modalTitle").textContent = date + ' 事奉對調';
+      document.getElementById("modalSubtitle").textContent = "請選擇您想對調的人員：";
+      const body = document.getElementById("modalBody");
+      body.innerHTML = "";
+
+      const sortedRoles = Object.entries(item.roles || {})
+        .filter(([k]) => allowedRoles.includes(k))
+        .sort(([a], [b]) => roleOrder.indexOf(a) - roleOrder.indexOf(b));
+
+      sortedRoles.forEach(([role, val]) => {
+        const persons = Array.isArray(val) ? val : [val];
+        persons.forEach(person => {
+          const btn = document.createElement("button");
+          btn.className = "role-select-btn";
+          btn.innerHTML = '<b>' + role + '</b>：' + person + ' <span style="float:right; color:var(--accent-color);">對調 ➔</span>';
+          btn.onclick = () => selectSwapTarget(role, person, date);
+          body.appendChild(btn);
+        });
+      });
+      document.getElementById("generalModal").classList.add("active");
+    }
+
+    function selectSwapTarget(role, oldPerson, date) {
+      const body = document.getElementById("modalBody");
+
+      const now = new Date();
+      const todayStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+      
+      let availableSchedules = scheduleData.filter(d => d.date >= todayStr);
+      
+      if (role === "聖餐襄禮") {
+        availableSchedules = availableSchedules.filter(d => d.roles && d.roles["聖餐襄禮"]);
+      }
+
+      let dateOptions = availableSchedules.map(d => '<option value="' + d.id + '" ' + (d.id === currentActiveId ? 'selected' : '') + '>' + d.date + '</option>').join('');
+
+      body.innerHTML = 
+        '<div style="margin-bottom: 12px; font-size: 14px;">對調 <b>' + date + '</b> 的 <b>' + role + '</b>（原：<b>' + oldPerson + '</b>）</div>' +
+        '<div class="form-group">' +
+          '<label class="form-label">對換日期：</label>' +
+          '<select id="targetSwapDateId" class="form-select" onchange="updateSwapCandidates(\'' + role + '\')">' + dateOptions + '</select>' +
+        '</div>' +
+        '<div class="form-group">' +
+          '<label class="form-label">對換事奉人員：</label>' +
+          '<select id="targetSwapPerson" class="form-select"></select>' +
+        '</div>' +
+        '<div class="modal-footer">' +
+          '<button class="cancel-btn" onclick="openSwapModal(' + currentActiveId + ', \'' + date + '\')">返回</button>' +
+          '<button class="secondary-action-btn" onclick="executeSwap(\'' + role + '\', \'' + oldPerson + '\', \'' + date + '\')">確認對調</button>' +
+        '</div>';
+
+      updateSwapCandidates(role);
+    }
+
+    function updateSwapCandidates(role) {
+      const targetDateId = parseInt(document.getElementById("targetSwapDateId").value);
+      const targetItem = scheduleData.find(s => s.id === targetDateId);
+      const personSelect = document.getElementById("targetSwapPerson");
+      if (!targetItem || !personSelect) return;
+
+      const servingNames = [];
+      if (role === "主席" || role === "聖餐襄禮") {
+        const val = targetItem.roles && targetItem.roles[role];
+        if (val) {
+          if (Array.isArray(val)) val.forEach(p => servingNames.push(p));
+          else if (typeof val === 'string') servingNames.push(val);
+        }
+      } else {
+        const isVocal = vocalRoles.includes(role);
+        const targetRoles = isVocal ? vocalRoles : instrumentRoles;
+
+        Object.entries(targetItem.roles || {}).forEach(([r, val]) => {
+          if (targetRoles.includes(r)) {
+            if (Array.isArray(val)) {
+              val.forEach(p => servingNames.push(p));
+            } else if (typeof val === 'string') {
+              servingNames.push(val);
+            }
+          }
+        });
+      }
+
+      const uniqueNames = Array.from(new Set(servingNames)).sort();
+      personSelect.innerHTML = uniqueNames.map(n => '<option value="' + n + '">' + n + '</option>').join('');
+    }
+
+    async function executeSwap(role, oldPerson, sourceDate) {
+      const targetSwapPerson = document.getElementById("targetSwapPerson").value;
+      const targetDateId = parseInt(document.getElementById("targetSwapDateId").value);
+
+      if (!targetSwapPerson) {
+        alert('請選擇對換的事奉人員！');
+        return;
+      }
+
+      const sourceItem = scheduleData.find(s => s.id === currentActiveId);
+      const targetItem = scheduleData.find(s => s.id === targetDateId);
+      if (!sourceItem || !targetItem) return;
+
+      const now = new Date().toISOString();
+
+      let sVal = sourceItem.roles[role];
+      sourceItem.roles[role] = Array.isArray(sVal) ? sVal.map(p => p === oldPerson ? targetSwapPerson : p) : targetSwapPerson;
+      sourceItem.roles._is_updated = true;
+      sourceItem.updated_at = now;
+
+      if (sourceItem.id !== targetItem.id) {
+        if (role === "主席" || role === "聖餐襄禮") {
+          let tVal = targetItem.roles[role];
+          if (Array.isArray(tVal)) {
+            if (tVal.includes(targetSwapPerson)) {
+              targetItem.roles[role] = tVal.map(p => p === targetSwapPerson ? oldPerson : p);
+            } else {
+              targetItem.roles[role] = [...tVal, oldPerson];
+            }
+          } else {
+            targetItem.roles[role] = oldPerson;
+          }
+        } else {
+          Object.entries(targetItem.roles || {}).forEach(([r, val]) => {
+            if (allowedRoles.includes(r)) {
+              if (Array.isArray(val)) {
+                if (val.includes(targetSwapPerson)) {
+                  targetItem.roles[r] = val.map(p => p === targetSwapPerson ? oldPerson : p);
+                }
+              } else if (val === targetSwapPerson) {
+                targetItem.roles[r] = oldPerson;
+              }
+            }
+          });
+        }
+        targetItem.roles._is_updated = true;
+        targetItem.updated_at = now;
+        await supabaseClient.from('schedules').update({ roles: targetItem.roles, updated_at: now }).eq('id', targetItem.id);
+      }
+
+      const { error } = await supabaseClient.from('schedules').update({ roles: sourceItem.roles, updated_at: now }).eq('id', sourceItem.id);
+      if (error) { alert('對調失敗：' + error.message); return; }
+
+      closeModal();
+      alert('已成功將 ' + sourceDate + ' 的 ' + role + '【' + oldPerson + '】與 ' + targetItem.date + ' 的【' + targetSwapPerson + '】對調！');
+      fetchSchedules();
+    }
+  </script>
+</body>
+</html>
