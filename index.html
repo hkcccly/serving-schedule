@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>教會主日事奉人員編排器</title>
   <!-- 引入 Supabase JS SDK -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
   <style>
     :root {
       --bg-color: #f5f5f7;
@@ -275,7 +275,6 @@
       border-radius: 12px;
       padding: 20px;
       line-height: 1.6;
-      text-align: left;
     }
 
     .modal-overlay {
@@ -456,25 +455,19 @@
     }
 
     window.addEventListener('DOMContentLoaded', () => {
-      try {
-        if (typeof supabase !== 'undefined' && supabase.createClient) {
+      if (typeof supabase !== 'undefined') {
+        try {
           supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        } catch (e) {
+          console.error("Supabase 初始化錯誤:", e);
         }
-      } catch (e) {
-        console.error("Supabase 初始化錯誤:", e);
       }
       fetchSchedules();
     });
 
     async function fetchSchedules() {
       if (!supabaseClient) {
-        document.getElementById("scheduleContainer").innerHTML = 
-          '<div class="error-box">' +
-          '<b>⚠️ Supabase SDK 載入失敗</b><br>' +
-          '可能原因：網路連線異常或 CDN 被阻擋。<br>' +
-          '請檢查網路或重新整理網頁。' +
-          '</div>';
-        document.getElementById("lastUpdateinnerHTML = '<span class="red-dot"></span>載入失敗';
+        setTimeout(fetchSchedules, 500);
         return;
       }
 
@@ -492,7 +485,7 @@
       } catch (err) {
         document.getElementById("scheduleContainer").innerHTML = 
           '<div class="error-box">' +
-          '<b>⚠️ 資料庫讀取失敗</b><br>' +
+          '<b>⚠️ 載入失敗</b><br>' +
           '錯誤訊息：' + (err.message || err) + '<br><br>' +
           '<b>排查建議：</b><br>' +
           '1. 確認 Supabase 資料表名稱是否為 <code>schedules</code>。<br>' +
@@ -735,8 +728,10 @@
       const now = new Date();
       const todayStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
       
+      // 篩選未來日期
       let availableSchedules = scheduleData.filter(d => d.date >= todayStr);
       
+      // 如果是「聖餐襄禮」，對換日期只顯示包含「聖餐襄禮」的日期（即每個月第2個星期日）
       if (role === "聖餐襄禮") {
         availableSchedules = availableSchedules.filter(d => d.roles && d.roles["聖餐襄禮"]);
       }
